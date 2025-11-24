@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis_server
+    ports:
+      - "6379:6379"
+
+  ai_service:
+    build: ./service_a
+    container_name: ai_service
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - WORKER_URL=http://worker_service:9000/process
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      - redis
+      - worker_service
+
+  worker_service:
+    build: ./service_b
+    container_name: worker_service
+    ports:
+      - "9000:9000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
+      - WATERMARK_PATH=/app/logo.jpg
+    depends_on:
+      - redis
