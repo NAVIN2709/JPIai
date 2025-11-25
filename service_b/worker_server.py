@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, Form
 from celery import Celery
 import subprocess, cloudinary, cloudinary.uploader
 import tempfile, os, redis, traceback
+import ssl
 
 app = FastAPI()
 
@@ -17,9 +18,40 @@ CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
 WATERMARK_PATH = os.getenv("WATERMARK_PATH", "/app/logo.jpg")
 DEFAULT_WATERMARK = "/app/default_logo.jpg"  # fallback watermark
 
-# Redis / Celery setup
-r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-celery = Celery(__name__, broker=REDIS_URL, backend=REDIS_URL)
+# ==================================================
+# REDIS / CELERY SETUP  (UPDATED)
+# ==================================================
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+
+if not REDIS_URL:
+    raise Exception("❌ REDIS_URL missing! Set it in environment variables.")
+
+print("🔗 Connecting to Upstash using REDIS_URL...")
+
+# ---------------------------------
+# 🔥 Redis client (Upstash)
+# ---------------------------------
+# Upstash provides a proper `rediss://` URL.
+# Do NOT add ?ssl_cert_reqs=none — redis-py 5.x rejects it.
+r = redis.Redis.from_url(
+    REDIS_URL,
+    decode_responses=True
+)
+
+print("✅ Connected to Upstash via REDIS_URL")
+print("ping →", r.ping())
+
+# ---------------------------------
+# 🔥 Celery broker/backend
+# ---------------------------------
+CELERY_BROKER = REDIS_URL+"?ssl_cert_reqs=CERT_NONE"
+CELERY_BACKEND = REDIS_URL+"?ssl_cert_reqs=CERT_NONE"
+
+print("🔗 Setting up Celery with Upstash...")
+celery = Celery(__name__, broker=CELERY_BROKER, backend=CELERY_BACKEND)
+print("✅ Celery connected to Upstash")
+
+print("✅ Celery SSL configuration ready (Upstash)")
 
 # Cloudinary authentication
 cloudinary.config(

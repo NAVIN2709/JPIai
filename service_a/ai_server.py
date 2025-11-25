@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 import google.generativeai as genai
 import openai, anthropic, redis, requests, os, tempfile
 import base64
@@ -6,6 +7,15 @@ import re
 from PIL import Image
 
 app = FastAPI()
+
+#CORS Middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],          # Allow all origins
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 REDIS_URL = os.getenv("REDIS_URL")
 WORKER_URL = os.getenv("WORKER_URL")
@@ -29,27 +39,29 @@ if OPENAI_API_KEY:
 
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
-
 # ----------------------------
-#   REDIS
+#   REDIS (Upstash)
 # ----------------------------
-# Prefer explicit env vars; fall back to REDIS_URL; finally use the
-# provided direct connection details if nothing else is set.
-REDIS_HOST = os.getenv("REDIS_HOST")
-REDIS_PORT = os.getenv("REDIS_PORT")
-REDIS_USERNAME = os.getenv("REDIS_USERNAME")
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+REDIS_URL = os.getenv("REDIS_URL")
 
-if REDIS_HOST and REDIS_PORT:
-    r = redis.Redis(
-        host=REDIS_HOST,
-        port=int(REDIS_PORT),
-        decode_responses=True,
-        username=REDIS_USERNAME or None,
-        password=REDIS_PASSWORD or None,
-    )
-else:
-    print("⚠️ REDIS_HOST or REDIS_PORT not set, falling back to REDIS_URL")
+if not REDIS_URL:
+    raise ValueError("❌ Missing REDIS_URL for Upstash. Copy it from Upstash dashboard.")
+
+# Upstash already uses TLS, no need for ssl args
+print("🔗 Connecting to Upstash Redis...")
+
+# Upstash works with CERT_NONE just fine
+if REDIS_URL.startswith("redis://"):
+    REDIS_URL = REDIS_URL.replace("redis://", "rediss://")
+
+# FINAL clean connection
+r = redis.Redis.from_url(
+    REDIS_URL,
+    decode_responses=True,
+)
+
+print("✅ Connected to Upstash Redis")
+print("PING →", r.ping())
     
 SYSTEM_PROMPT = """MANIM ANIMATION GENERATOR
 
