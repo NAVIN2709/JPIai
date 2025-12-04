@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from "react";
-import { Upload, Zap, Video, ArrowRight, Sparkles } from "lucide-react";
+import { Upload, Zap, Video, ArrowRight } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import Image1 from "../assets/image1.png";
 import Image2 from "../assets/image2.png";
 import Image3 from "../assets/image3.png";
 
 export default function LandingPage() {
+  const navigate = useNavigate();
+  const handleNavigate = () => {
+    navigate("/think");
+  }
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
@@ -350,7 +355,7 @@ export default function LandingPage() {
             </p>
 
             <button
-              onClick={() => (window.location.href = "/think")}
+              onClick={() => {handleNavigate}}
               className="group relative inline-flex items-center gap-3 bg-white text-black text-lg font-semibold px-10 py-5 rounded-full hover:bg-gray-100 transform hover:scale-105 transition-all duration-300 shadow-2xl shadow-white/10"
             >
               <span>Try It Now</span>
