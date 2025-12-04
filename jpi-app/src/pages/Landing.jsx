@@ -355,7 +355,7 @@ export default function LandingPage() {
             </p>
 
             <button
-              onClick={() => {handleNavigate}}
+              onClick={handleNavigate}
               className="group relative inline-flex items-center gap-3 bg-white text-black text-lg font-semibold px-10 py-5 rounded-full hover:bg-gray-100 transform hover:scale-105 transition-all duration-300 shadow-2xl shadow-white/10"
             >
               <span>Try It Now</span>
