@@ -10,18 +10,36 @@ export default function Home() {
 
   const fileInputRef = useRef(null);
 
+  const addResponsePlaceholder = () => {
+    const id = Date.now() + Math.random();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id,
+        type: "response",
+        status: "loading",
+        file: null,
+        error: null,
+      },
+    ]);
+    return id;
+  };
+
   const handleSend = async () => {
     if (!file || loading) return;
 
+    // Show user's image
     const userMessage = {
       id: Date.now(),
       type: "user",
       file: URL.createObjectURL(file),
     };
-
     setMessages((prev) => [...prev, userMessage]);
+
+    // Add skeleton placeholder
+    const placeholderId = addResponsePlaceholder();
+
     setLoading(true);
-    setFile(null);
 
     try {
       // Upload image
@@ -43,61 +61,66 @@ export default function Home() {
 
       const jobId = genData.job_id;
 
-      // Polling function
+      // Poll backend for completion
       const pollStatus = async () => {
         try {
           const statusRes = await fetch(
             `${import.meta.env.VITE_BACKEND_URL}/status/${jobId}`
           );
+
           const statusData = await statusRes.json();
 
           if (statusData.status === "done" && statusData.url) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: Date.now(),
-                type: "response",
-                file: statusData.url,
-              },
-            ]);
+            // Replace skeleton
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === placeholderId
+                  ? { ...m, status: "done", file: statusData.url }
+                  : m
+              )
+            );
             setLoading(false);
           } else if (statusData.status === "failed") {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: Date.now(),
-                type: "response",
-                file: null,
-                error: statusData.error || "Processing failed",
-              },
-            ]);
+            // Replace skeleton with error
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === placeholderId
+                  ? {
+                      ...m,
+                      status: "failed",
+                      error: statusData.error || "Processing failed",
+                    }
+                  : m
+              )
+            );
             setLoading(false);
           } else if (
             ["queued", "processing", "rendering"].includes(statusData.status)
           ) {
-            setTimeout(pollStatus, 5000);
+            setTimeout(pollStatus, 10000);
           } else {
             console.warn("Unknown job status:", statusData.status);
             setLoading(false);
           }
         } catch (err) {
           console.error("Polling error:", err);
-          setTimeout(pollStatus, 5000);
+          setTimeout(pollStatus, 10000);
         }
       };
 
       pollStatus();
     } catch (err) {
       console.error("Upload error:", err);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          type: "response",
-          file: null,
-          error: err.message,
-        },
-      ]);
+
+      // Replace skeleton with error
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === placeholderId
+            ? { ...m, status: "failed", error: err.message }
+            : m
+        )
+      );
+
       setLoading(false);
     }
 
@@ -121,6 +144,7 @@ export default function Home() {
             }`}
           >
             <div className="max-w-xs md:max-w-md relative">
+              {/* USER IMAGE */}
               {msg.type === "user" && msg.file && (
                 <img
                   src={msg.file}
@@ -129,24 +153,28 @@ export default function Home() {
                 />
               )}
 
-              {msg.type === "response" && msg.file && (
-                <video
-                  src={msg.file}
-                  controls
-                  className="rounded-lg bg-black border border-white shadow-md"
-                />
+              {/* RESPONSE SKELETON */}
+              {msg.type === "response" && msg.status === "loading" && (
+                <SkeletonVideo />
               )}
 
-              {msg.type === "response" && msg.error && (
+              {/* FINAL VIDEO */}
+              {msg.type === "response" &&
+                msg.status === "done" &&
+                msg.file && (
+                  <video
+                    src={msg.file}
+                    controls
+                    className="rounded-lg bg-black border border-white shadow-md"
+                  />
+                )}
+
+              {/* ERROR */}
+              {msg.type === "response" && msg.status === "failed" && (
                 <div className="p-4 rounded-lg bg-red-600 text-white shadow-md">
                   {msg.error}
                 </div>
               )}
-
-              {msg.type === "response" &&
-                !msg.file &&
-                !msg.error &&
-                loading && <SkeletonVideo />}
             </div>
           </div>
         ))}
@@ -181,14 +209,16 @@ export default function Home() {
           />
 
           {/* Upload button */}
-          {!loading && (<div
-            onClick={() => fileInputRef.current.click()}
-            className={`p-2 md:p-3 rounded-lg bg-white text-black cursor-pointer hover:bg-gray-300 transition flex items-center justify-center shadow-md ${
-              loading ? "opacity-50 cursor-not-allowed" : ""
-            }`}
-          >
-            <Upload className="h-6 w-6 md:h-7 md:w-7" />
-          </div>)}
+          {!loading && (
+            <div
+              onClick={() => fileInputRef.current.click()}
+              className={`p-2 md:p-3 rounded-lg bg-white text-black cursor-pointer hover:bg-gray-300 transition flex items-center justify-center shadow-md ${
+                loading ? "opacity-50 cursor-not-allowed" : ""
+              }`}
+            >
+              <Upload className="h-6 w-6 md:h-7 md:w-7" />
+            </div>
+          )}
 
           {/* Send button */}
           <button
@@ -200,24 +230,6 @@ export default function Home() {
           </button>
         </div>
       </div>
-      {/* Test Button - Remove in production */}
-      {/* <button
-        onClick={() => {
-          setMessages([
-            ...messages,
-            {
-              id: Date.now(),
-              type: "response",
-              file: null,
-              error: null,
-            },
-          ]);
-          setLoading(true);
-        }}
-        className="mt-4 bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-600 hover:bg-gray-700 transition"
-      >
-        🧪 Test Skeleton Loader
-      </button> */}
     </div>
   );
 }
