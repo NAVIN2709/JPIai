@@ -15,7 +15,8 @@ RUN pip install --no-cache-dir \
     redis \
     requests \
     python-multipart \
-    Pillow
+    Pillow \
+    groq
 
 # Set python path so service_a is importable
 ENV PYTHONPATH=/app

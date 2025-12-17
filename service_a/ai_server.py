@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import google.generativeai as genai
 import openai, anthropic, redis, requests, os, tempfile
+from groq import Groq
 import base64
 import re
 from PIL import Image
@@ -27,6 +28,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+KIMI_API = os.getenv("KIMI_API")
 
 # ----------------------------
 #   CONFIGURE ONLY IF VALID
@@ -63,68 +65,138 @@ r = redis.Redis.from_url(
 print("✅ Connected to Upstash Redis")
 print("PING →", r.ping())
     
-SYSTEM_PROMPT = """MANIM ANIMATION GENERATOR
+SYSTEM_PROMPT = """
+MANIM ANIMATION GENERATOR (3B1B-STYLE)
 
-Output ONLY executable Python code. No markdown, no explanatory text.
-Start with 3-7 bullet checklist explaining approach before code.
+Output ONLY executable Python code.
+No markdown. No explanations outside code.
+
+Start with a 3–7 bullet checklist (Python comments) explaining the animation approach before the code.
+
+TARGET DURATION:
+- Total video length: ~120 seconds
+- Pace content so concepts breathe; prefer clarity over speed
 
 FRAME SPECS (16:9, 1920×1080):
-- Dimensions: 14.22w × 8h units, origin (0,0) at center
-- X: -7.11 to +7.11 (use -7 to +7), Y: -4 to +4
-- SAFE ZONES: x∈[-6.5,6.5], y∈[-3.5,3.5] (0.5 unit margins mandatory)
+- Scene units: 14.22w × 8h, origin (0,0) at center
+- X range: [-7, 7], Y range: [-4, 4]
+- SAFE ZONES (mandatory margins):
+  - x ∈ [-6.5, 6.5]
+  - y ∈ [-3.5, 3.5]
 
-LAYOUT:
+LAYOUT (default, unless concept requires temporary center focus):
+
 ┌──────────────────────────────┐
-│ TITLE: y=3.0-3.5 (buff=0.3)  │
+│ TITLE: y = 3.0–3.5 (buff=0.3)│
 ├──────────────┬───────────────┤
-│ LEFT x=-3.5  │ RIGHT x=3.5   │
-│ (visuals)    │ (equations)   │
+│ LEFT VISUALS │ RIGHT MATH    │
 │ x:-6 to -1   │ x:1 to 6      │
 │ y:-3 to 2.5  │ y:-3 to 2.5   │
 └──────────────┴───────────────┘
 
-POSITIONING:
-title.to_edge(UP,buff=0.3) | obj.move_to(LEFT*3.5) | eq.move_to(RIGHT*3.5) | summary.move_to(ORIGIN)
+Positioning helpers:
+- title.to_edge(UP, buff=0.3)
+- visuals.move_to(LEFT*3.5)
+- equations.move_to(RIGHT*3.5)
+- key idea may move temporarily to ORIGIN
 
-CODE STRUCTURE:
+Concept clarity overrides layout only briefly.
+
+CODE STRUCTURE (MANDATORY):
+
 from manim import *
+
 class MainScene(Scene):
     def construct(self):
-        # PHASE 1: TITLE (0-5s)
-        # PHASE 2: SETUP (5-15s)
-        # PHASE 3: DEMO (15-35s)
-        # PHASE 4: ANALYSIS (35-60s)
-        # PHASE 5: RESULTS (60-75s)
-        # PHASE 6: SUMMARY (75-80s)
+        # PHASE 1: TITLE (0–8s)
+        # PHASE 2: SETUP (8–25s)
+        # PHASE 3: DEMO (25–60s)
+        # PHASE 4: ANALYSIS (60–95s)
+        # PHASE 5: RESULTS (95–110s)
+        # PHASE 6: SUMMARY (110–120s)
+
+ANIMATION RULES (3B1B CORE):
+- Allowed animations ONLY:
+  Write, Create, FadeIn, FadeOut, Transform, ReplacementTransform, wait
+- Prefer Transform / ReplacementTransform over deleting & rewriting
+- FadeOut ONLY when a concept is abandoned
+- wait(1–2) after equations
+- wait(2–3) after final answers
+- wait(3–4) at end
+- Max 10 objects on screen
+- Clear aggressively between phases
+
+OBJECT & CONCEPT RULES (VERY IMPORTANT):
+- Reuse objects if the same concept reappears
+- Symbols should evolve via Transform, not recreation
+- Group related elements using VGroup
+- Animate groups as units when possible
+- Use color semantically (same variable = same color)
+- Prefer emphasis over duplication
+
+ALLOWED OBJECTS (SAFE, 3B1B-STYLE):
+- Text, MathTex
+- VGroup
+- Dot, Line, Arrow
+- Axes, NumberPlane
+- Brace
+- SurroundingRectangle
+
+(No fancy effects, no camera moves, no updaters unless required)
+
+TYPOGRAPHY PRESETS (CONSISTENT):
+- TITLE = 44–48
+- HEADERS = 30–32
+- EQUATIONS = 26–30
+- LABELS = 24–26
+- EMPHASIS / ANSWERS = 34–38
+
+If equation width > 4 units:
+- Reduce font size by 4–6 OR
+- Split across lines
 
 PHASE RULES:
-- Only use basic animations: Write, FadeIn, FadeOut, Transform, Create, wait
-- Wait: 1s after equations, 2s after answers, 3s at end
-- FadeOut intermediates before showing new elements
-- Phase 1 title: font_size=40-48, color=BLUE/GOLD, Write(title), wait(1)
-- Phase 2: LEFT visuals, RIGHT equations font_size=28, stack with .next_to(..., buff=0.3)
-- Phase 3-6: Animate with Transform/Create/FadeIn/FadeOut only
-- Max 10 elements on screen, track and clear aggressively
-- All content must stay within [-6.5,6.5]×[-3.5,3.5]
+- Phase 1: Title only, Write(title), wait(2)
+- Phase 2: Introduce visuals (LEFT) and equations (RIGHT)
+- Phase 3–4: Deep concept evolution using Transform-based animation
+- Phase transitions must FadeOut irrelevant objects
+- Phase 6: Clean, slow, centered summary at ORIGIN
 
-TYPOGRAPHY:
-Title:40-48 | Headers:28-32 | Equations:24-30 | Labels:22-28 | Answers:32-38
-If equation width>4 units: reduce font_size by 4-6pts or split lines
+CHECKLIST (MUST SATISFY ALL):
+✓ Use only allowed animations
+✓ Reuse objects via Transform where possible
+✓ Explicit font_size & colors
+✓ Use buff in next_to
+✓ LEFT x < -1, RIGHT x > 1
+✓ All content inside [-6.5,6.5] × [-3.5,3.5]
+✓ FadeOut before 5+ equations
+✓ wait() after animations
+✓ Phase comments present
+✓ No undefined variables
+✓ Max 10 objects visible
+✓ Summary centered & clean
+✓ Total runtime ≈ 120s
 
-CHECKLIST:
-✓ Use only basic animations ✓ Explicit font_size/colors ✓ buff in .next_to() ✓ title.to_edge(UP,buff=0.3)
-✓ LEFT x<-1, RIGHT x>1 ✓ All in [-6.5,6.5]×[-3.5,3.5] ✓ FadeOut before 5+ equations ✓ wait() after animations
-✓ Phase comments ✓ No undefined vars ✓ Clear content aggressively ✓ Position precisely
+ERROR HANDLING:
+If the concept is invalid, ambiguous, or missing information, output:
 
-ERROR: If concept invalid/missing, output: # ERROR: [reason]. Cannot generate.
+# ERROR: [reason]. Cannot generate.
 
 REMINDERS:
-1. Clear content aggressively with FadeOut 2. Position precisely 3. Smaller fonts > cutoff text 4. Max 10 elements on screen
-5. Phases need FadeOut transitions 6. Center summary clearly 7. Output ONLY Python
-8. Comment each phase 9. No explanations outside code
+1. Concepts > layout
+2. Transform > recreate
+3. Fewer objects = clearer thinking
+4. Emphasize, don’t repeat
+5. Every animation must teach something
+6. No narration text outside visuals
+7. Output ONLY Python
+8. Comment each phase
+9. End with wait(4)
+
+BEGIN CODE GENERATION.
+"""
 
 
-BEGIN CODE GENERATION."""
 
 # ------------------------------------------------------
 #   CODE VALIDATION & CLEANING
@@ -220,7 +292,7 @@ def try_generate_with_fallback(image_path):
         try:
             print("🔄 Trying Gemini 2.5 Pro...")
             model = genai.GenerativeModel(
-                "gemini-2.5-pro",
+                "gemini-2.5-flash",
                 system_instruction=SYSTEM_PROMPT
             )
             
@@ -238,45 +310,50 @@ def try_generate_with_fallback(image_path):
         except Exception as e:
             print(f"❌ Gemini failed: {e}")
 
-    # ---------------------------------------
-    # 1.5️⃣ Groq (OpenAI-compatible endpoint)
-    # ---------------------------------------
     if GROQ_API_KEY:
         try:
-            print("🔄 Trying Groq (openai-compatible)...")
-            # Create a client that points to Groq's OpenAI-compatible endpoint
-            groq_client = openai.OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+            print("🔄 Trying Groq (native SDK)...")
 
+            # Initialize Groq client
+            groq_client = Groq(api_key=GROQ_API_KEY)
+
+            # Read and encode image
             with open(image_path, "rb") as img:
-                image_b64 = base64.b64encode(img.read()).decode('utf-8')
+                image_b64 = base64.b64encode(img.read()).decode("utf-8")
 
-            # Build a multimodal input: system prompt, instruction, and the image as a data URI
-            prompt = [
-                {"type": "text", "text": SYSTEM_PROMPT},
-                {"type": "text", "text": "Analyze this handwritten physics/math problem and generate the complete Manim animation code."},
-                {"type": "image", "image_url": f"data:image/png;base64,{image_b64}"}
+            # Build multimodal message
+            messages = [
+                {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Analyze this handwritten physics/math problem and generate the complete Manim animation code."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_b64}"
+                            }
+                        }
+                    ]
+                }
             ]
 
-            resp = groq_client.responses.create(
-                model="openai/gpt-oss-20b",
-                input=prompt,
+        # Create completion
+            resp = groq_client.chat.completions.create(
+                model="meta-llama/llama-4-maverick-17b-128e-instruct",  # or another vision model
+                messages=messages,
+                temperature=0.2,
+                max_tokens=2048,
             )
 
-            # Try to extract text from common response shapes
-            output_text = None
-            if hasattr(resp, 'output_text') and resp.output_text:
-                output_text = resp.output_text
-            else:
-                out = getattr(resp, 'output', None)
-                if out:
-                    for item in out:
-                        if isinstance(item, dict) and 'content' in item:
-                            for c in item['content']:
-                                if isinstance(c, dict) and c.get('type') in ('output_text', 'text'):
-                                    output_text = c.get('text') or c.get('value')
-                                    break
-                            if output_text:
-                                break
+        # Extract output text
+            output_text = resp.choices[0].message.content
 
             if output_text:
                 print("✓ Groq generated response")
@@ -349,6 +426,62 @@ def try_generate_with_fallback(image_path):
 
         except Exception as e:
             print(f"❌ Claude failed: {e}")
+    
+        # ---------------------------------------
+    # 1.2️⃣ Kimi (Moonshot Vision – OpenAI compatible)
+    # ---------------------------------------
+    if KIMI_API:
+        try:
+            print("🔄 Trying Kimi Moonshot Vision...")
+
+            from openai import OpenAI
+
+            kimi_client = OpenAI(
+                api_key=KIMI_API,
+                base_url="https://api.moonshot.ai/v1",
+            )
+
+            with open(image_path, "rb") as img:
+                image_b64 = base64.b64encode(img.read()).decode("utf-8")
+
+            completion = kimi_client.chat.completions.create(
+                model="moonshot-v1-8k-vision-preview",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": SYSTEM_PROMPT
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{image_b64}"
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Analyze this handwritten physics or math problem "
+                                    "and generate the COMPLETE Manim animation code "
+                                    "exactly following the system prompt rules."
+                                )
+                            }
+                        ]
+                    }
+                ],
+            )
+
+            output = completion.choices[0].message.content
+
+            if output:
+                print("✓ Kimi generated response")
+                return output
+
+        except Exception as e:
+            print(f"❌ Kimi failed: {e}")
+
 
     print("❌ All AI models failed")
     return None
