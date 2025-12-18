@@ -37,7 +37,7 @@ export default function LandingPage() {
 
   return (
     <>
-      <style jsx>{`
+      <style>{`
         /* Custom Scrollbar Styles */
         ::-webkit-scrollbar {
           width: 12px;
