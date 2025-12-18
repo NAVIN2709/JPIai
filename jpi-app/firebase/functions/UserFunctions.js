@@ -1,5 +1,5 @@
 import { auth, db } from "../config";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp,collection, query, where, getDocs, addDoc  } from "firebase/firestore";
 
 export const createUser = async (user) => {
   if (!user) return null;
@@ -70,37 +70,40 @@ export const updateGeneration = async (uid) => {
 };
 
 //get generations by genId
-export const getGenerations = async (genId) => {
-  if (!uid) return null;
+export const getGenerations = async (uid) => {
+  if (!uid) return [];
+
   try {
-    const generationsRef = doc(db, "generations", genId);
-    const generationsSnap = await getDoc(generationsRef);
-    if (generationsSnap.exists()) {
-      return generationsSnap.data();
-    } else {
-      return null;
-    }
+    const q = query(
+      collection(db, "generations"),
+      where("generatedBy", "==", uid)
+    );
+
+    const snapshot = await getDocs(q);
+
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
   } catch (error) {
     console.error("Error fetching generations:", error);
-    return null;
+    return [];
   }
 };
-
 //create a new generation
-export const createGeneration = async (uid, videourl, imageurl) => {
-  if (!uid || !generationData) return null;
+export const createGeneration = async (uid, videoUrl) => {
+  if (!uid || !videoUrl) return;
+
   try {
-    const generationRef = doc(db, "generations");
-    const newGeneration = {
-      video: videourl,
+    const generationData = {
       generatedBy: uid,
+      video: videoUrl,
       createdAt: serverTimestamp(),
-      image: imageurl,
     };
-    await setDoc(generationRef, newGeneration);
-    return generationData;
+
+    await addDoc(collection(db, "generations"), generationData);
   } catch (error) {
     console.error("Error creating generation:", error);
-    return null;
+    throw error;
   }
 };
