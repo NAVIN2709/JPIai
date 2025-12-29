@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Menu, Upload, X } from "lucide-react";
+import { Loader2, Menu, Send, Upload, X, Camera } from "lucide-react";
 import Logo from "../assets/logo.jpg";
 import SkeletonVideo from "../components/SkeletonVideo.jsx";
 import {
@@ -10,8 +10,17 @@ import {
 import { auth } from "../../firebase/config.js";
 import { requestPermissionAndSaveToken } from "../utils/notification.js";
 import SidebarModal from "../components/SideBarModal.jsx";
+import useTypewriter from "../components/useTypeWriter.js";
 
 export default function Home() {
+  const PLACEHOLDERS = [
+    "Drop in your image to generate a video…",
+    "Upload a diagram → get an explainer video",
+    "Turn images into animations in minutes",
+    "Snap a question. Get a visual answer.",
+    "From image to explainer video ✨",
+  ];
+
   const [messages, setMessages] = useState([]);
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -23,18 +32,15 @@ export default function Home() {
   const [fcmDone, setFcmDone] = useState(false);
 
   const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+
+  const placeholder = useTypewriter(PLACEHOLDERS);
 
   const addResponsePlaceholder = () => {
     const id = Date.now() + Math.random();
     setMessages((prev) => [
       ...prev,
-      {
-        id,
-        type: "response",
-        status: "loading",
-        file: null,
-        error: null,
-      },
+      { id, type: "response", status: "loading", file: null, error: null },
     ]);
     return id;
   };
@@ -45,171 +51,130 @@ export default function Home() {
     try {
       const userData = await getUser(auth.currentUser.uid);
 
-      // ---------- FCM CHECK ----------
       if (!fcmDone) {
         if (!userData?.fcmToken) {
-          // User has NOT allowed notifications → show modal
           setShowFCMModal(true);
           return;
-        } else {
-          // User ALREADY has token → don't ask again
-          setFcmDone(true);
         }
+        setFcmDone(true);
       }
 
-      // ---------- GENERATIONS LEFT CHECK ----------
       if (userData.Timesleft <= 0) {
         setCanGenerate(false);
         alert("You have no generations left. Please upgrade your plan.");
         return;
       }
-    } catch (err) {
-      console.error("User fetch error:", err);
-      alert("Error fetching user data. Please try again.");
+    } catch {
+      alert("Error fetching user data.");
       return;
     }
 
-    // ---------- START GENERATION ----------
-    const userMessage = {
-      id: Date.now(),
-      type: "user",
-      file: URL.createObjectURL(file),
-    };
-    setMessages((prev) => [...prev, userMessage]);
+    setMessages((prev) => [
+      ...prev,
+      { id: Date.now(), type: "user", file: URL.createObjectURL(file) },
+    ]);
 
     const placeholderId = addResponsePlaceholder();
-    setFile(null);
     setLoading(true);
+    setFile(null);
 
     try {
       const formData = new FormData();
       formData.append("image", file);
 
-      const generateRes = await fetch(
+      const res = await fetch(
         `${import.meta.env.VITE_BACKEND_URL}/generate`,
         { method: "POST", body: formData }
       );
+      const { job_id } = await res.json();
+      if (!job_id) throw new Error("No job ID");
 
-      const genData = await generateRes.json();
-      if (!genData.job_id)
-        throw new Error(genData.error || "No job_id returned");
+      const poll = async () => {
+        const statusRes = await fetch(
+          `${import.meta.env.VITE_BACKEND_URL}/status/${job_id}`
+        );
+        const data = await statusRes.json();
 
-      const jobId = genData.job_id;
-
-      const pollStatus = async () => {
-        try {
-          const statusRes = await fetch(
-            `${import.meta.env.VITE_BACKEND_URL}/status/${jobId}`
+        if (data.status === "done") {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === placeholderId
+                ? { ...m, status: "done", file: data.url }
+                : m
+            )
           );
-          const statusData = await statusRes.json();
-
-          if (statusData.status === "done" && statusData.url) {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === placeholderId
-                  ? { ...m, status: "done", file: statusData.url }
-                  : m
-              )
-            );
-            await updateGeneration(auth.currentUser.uid);
-            await createGeneration(auth.currentUser.uid, statusData.url);
-            setLoading(false);
-          } else if (statusData.status === "failed") {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === placeholderId
-                  ? {
-                      ...m,
-                      status: "failed",
-                      error: statusData.error || "Processing failed",
-                    }
-                  : m
-              )
-            );
-            setLoading(false);
-          } else if (
-            ["queued", "processing", "rendering"].includes(statusData.status)
-          ) {
-            setTimeout(pollStatus, 10000);
-          } else {
-            console.warn("Unknown job status:", statusData.status);
-            setLoading(false);
-          }
-        } catch (err) {
-          console.error("Polling error:", err);
-          setTimeout(pollStatus, 10000);
+          await updateGeneration(auth.currentUser.uid);
+          await createGeneration(auth.currentUser.uid, data.url);
+          setLoading(false);
+        } else if (data.status === "failed") {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === placeholderId
+                ? { ...m, status: "failed", error: data.error }
+                : m
+            )
+          );
+          setLoading(false);
+        } else {
+          setTimeout(poll, 10000);
         }
       };
 
-      pollStatus();
+      poll();
     } catch (err) {
-      console.error("Upload error:", err);
-
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === placeholderId
-            ? { ...m, status: "failed", error: err.message }
-            : m
-        )
-      );
-
+      console.error(err);
       setLoading(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
-      {/* ---------- FCM PERMISSION MODAL ---------- */}
+      {/* FCM MODAL */}
       {showFCMModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-6">
-          <div className="bg-white text-black p-6 rounded-lg max-w-sm w-full shadow-lg">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-6">
+          <div className="bg-white text-black p-6 rounded-lg max-w-sm w-full">
             <h2 className="text-xl font-bold mb-3">
               Generation takes a little while ⚡
             </h2>
-
             <p className="mb-4">
-              Meanwhile, try solving the question yourself — but stay updated
-              while your result processes!
+              Enable notifications to get notified when your video is ready.
             </p>
-
             <button
-              className="w-full bg-black text-white py-2 rounded-lg font-semibold hover:bg-gray-800 transition"
+              className="w-full bg-black text-white py-2 rounded-lg mb-2"
               onClick={async () => {
                 await requestPermissionAndSaveToken(auth.currentUser.uid);
                 setFcmDone(true);
                 setShowFCMModal(false);
-                handleSend(); // resume generation
+                handleSend();
               }}
             >
               Enable Notifications
             </button>
-
             <button
-              className="w-full mt-2 bg-gray-300 text-black py-2 rounded-lg hover:bg-gray-400 transition"
+              className="w-full bg-gray-300 py-2 rounded-lg"
               onClick={() => {
                 setFcmDone(true);
                 setShowFCMModal(false);
-                handleSend(); // continue without permission
+                handleSend();
               }}
             >
-              Skip for Now
+              Skip
             </button>
           </div>
         </div>
       )}
 
-      {/* Logo */}
+      {/* Header */}
       <div className="flex justify-center mb-6">
-        <img src={Logo} alt="Logo" className="h-16 w-auto md:h-20" />
+        <img src={Logo} className="h-16 md:h-20" />
       </div>
-      <div className="absolute top-4 left-4">
-        <button
-          onClick={() => setShowSidebar(true)}
-          className="bg-white text-black px-3 py-2 rounded-lg shadow-md hover:bg-gray-300 transition"
-        >
-          <Menu/>
-        </button>
-      </div>
+
+      <button
+        onClick={() => setShowSidebar(true)}
+        className="absolute top-4 left-4 bg-white text-black p-2 rounded-lg"
+      >
+        <Menu />
+      </button>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-4 mb-4">
@@ -220,33 +185,16 @@ export default function Home() {
               msg.type === "user" ? "justify-end" : "justify-start"
             }`}
           >
-            <div className="max-w-xs md:max-w-md relative">
-              {/* User Image */}
-              {msg.type === "user" && msg.file && (
-                <img
-                  src={msg.file}
-                  alt="User"
-                  className="rounded-lg shadow-md"
-                />
+            <div className="max-w-xs md:max-w-md">
+              {msg.type === "user" && (
+                <img src={msg.file} className="rounded-lg" />
               )}
-
-              {/* Response Placeholder */}
-              {msg.type === "response" && msg.status === "loading" && (
-                <SkeletonVideo />
+              {msg.status === "loading" && <SkeletonVideo />}
+              {msg.status === "done" && (
+                <video src={msg.file} controls className="rounded-lg" />
               )}
-
-              {/* Final Video */}
-              {msg.type === "response" && msg.status === "done" && msg.file && (
-                <video
-                  src={msg.file}
-                  controls
-                  className="rounded-lg bg-black border border-white shadow-md"
-                />
-              )}
-
-              {/* Error */}
-              {msg.type === "response" && msg.status === "failed" && (
-                <div className="p-4 rounded-lg bg-red-600 text-white shadow-md">
+              {msg.status === "failed" && (
+                <div className="bg-red-600 p-4 rounded-lg">
                   {msg.error}
                 </div>
               )}
@@ -255,26 +203,25 @@ export default function Home() {
         ))}
       </div>
 
-      {/* Upload + Send Buttons */}
-      <div className="flex flex-col gap-3 md:gap-4">
+      {/* IMAGE INPUT BAR */}
+      <div className="w-full max-w-3xl mx-auto px-2">
         {file && (
-          <div className="relative flex justify-center">
+          <div className="relative mb-2 inline-block">
             <img
               src={URL.createObjectURL(file)}
-              alt="Preview"
-              className="h-32 w-auto md:h-40 rounded-lg border-2 border-white shadow-lg"
+              className="h-28 rounded-xl"
             />
-
             <button
               onClick={() => setFile(null)}
-              className="absolute top-0 right-0 -translate-y-1/2 translate-x-1/2 bg-red-600 text-white rounded-full p-1 md:p-2 hover:bg-red-700 shadow-md transition"
+              className="absolute -top-2 -right-2 bg-black/70 text-white rounded-full p-1"
             >
-              <X className="h-4 w-4 md:h-5 md:w-5" />
+              <X size={14} />
             </button>
           </div>
         )}
 
-        <div className="flex items-center gap-2 md:gap-4">
+        <div className="flex items-center gap-3 rounded-2xl border border-white bg-neutral-900 px-4 py-3 shadow-lg">
+          {/* Gallery */}
           <input
             type="file"
             accept="image/*"
@@ -283,26 +230,43 @@ export default function Home() {
             className="hidden"
           />
 
-          {!loading && (
-            <div
-              onClick={() => fileInputRef.current.click()}
-              className={`p-2 md:p-3 rounded-lg bg-white text-black cursor-pointer hover:bg-gray-300 transition flex items-center justify-center shadow-md ${
-                loading ? "opacity-50 cursor-not-allowed" : ""
-              }`}
-            >
-              <Upload className="h-6 w-6 md:h-7 md:w-7" />
-            </div>
-          )}
+          {/* Camera */}
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            ref={cameraInputRef}
+            onChange={(e) => setFile(e.target.files[0])}
+            className="hidden"
+          />
+
+          <button onClick={() => fileInputRef.current.click()}>
+            <Upload size={18} className="text-neutral-400" />
+          </button>
+
+          <button onClick={() => cameraInputRef.current.click()}>
+            <Camera size={18} className="text-neutral-400" />
+          </button>
+
+          <div className="flex-1 text-sm text-neutral-400 select-none">
+            {placeholder}
+            <span className="animate-pulse ml-0.5">|</span>
+          </div>
 
           <button
             onClick={handleSend}
             disabled={!file || loading || !canGenerate}
-            className="bg-white text-black px-4 py-2 md:px-6 md:py-3 rounded-lg font-semibold hover:bg-gray-300 transition disabled:opacity-50 shadow-md"
+            className="p-2 rounded-xl bg-white text-black disabled:opacity-40"
           >
-            {loading ? "Processing..." : "Send"}
+            {loading ? (
+              <Loader2 className="animate-spin" size={18} />
+            ) : (
+              <Send size={18} />
+            )}
           </button>
         </div>
       </div>
+
       <SidebarModal open={showSidebar} onClose={() => setShowSidebar(false)} />
     </div>
   );

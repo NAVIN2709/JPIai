@@ -30,7 +30,7 @@ export default function SidebarModal({ open, onClose }) {
       
       {/* Sidebar */}
       <div
-        className={`w-64 bg-neutral-900 border-r border-neutral-800
+        className={`w-full h-full bg-neutral-900 border-r border-neutral-800
           ${closing ? "animate-slide-out-right" : "animate-slide-in-left"}
         `}
       >

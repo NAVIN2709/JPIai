@@ -18,7 +18,7 @@ export const createUser = async (user) => {
       email: user.email || "",
       photoURL: user.photoURL || "",
       createdAt: serverTimestamp(),
-      Timesleft: 3,
+      Timesleft: 2,
       generationsList: [],
     };
 
